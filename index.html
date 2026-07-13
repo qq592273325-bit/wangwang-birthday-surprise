@@ -7,7 +7,7 @@
   <style>
     :root { --pink:#ff4f93; --hot:#ff2f7d; --cream:#fff8fb; --ink:#4b2638; --soft:#ffd6e6; }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; -webkit-text-size-adjust:100%; }
+    html { scroll-behavior: smooth; -webkit-text-size-adjust:100%; overscroll-behavior-y:none; }
     body { margin:0; color:var(--ink); font-family:"PingFang SC","Microsoft YaHei",sans-serif; background:linear-gradient(145deg,#fff7fb,#ffe3ef 45%,#ffd2e5); overflow-x:hidden; -webkit-tap-highlight-color:transparent; }
     button { font:inherit; }
     .blob { position:fixed; border-radius:999px; filter:blur(4px); opacity:.45; z-index:-1; animation:float 8s ease-in-out infinite; }
@@ -65,6 +65,9 @@
     .upload { display:block; margin:20px auto; border:2px dashed #ff80ae; padding:20px; border-radius:18px; cursor:pointer; }
     #confetti { position:fixed;inset:0;pointer-events:none;z-index:10;overflow:hidden; }
     .confetti { position:absolute;top:-20px;width:12px;height:18px;animation:fall 3.4s linear forwards; }
+    .music-toggle { position:fixed; right:16px; bottom:calc(18px + env(safe-area-inset-bottom)); z-index:8; width:48px; height:48px; border:1px solid #ffffffc9; border-radius:50%; color:#fff; background:linear-gradient(145deg,#ff2f7d,#ff77a9); box-shadow:0 10px 28px #b5266045; display:grid; place-items:center; font-size:21px; cursor:pointer; touch-action:manipulation; }
+    .music-toggle.playing { animation:musicPulse 2.2s ease-in-out infinite; }
+    @keyframes musicPulse { 50% { transform:scale(1.08); box-shadow:0 12px 34px #b5266060; } }
     @keyframes fall { to { transform:translateY(110vh) rotate(760deg); } }
     @media(max-width:760px){
       body { background:linear-gradient(180deg,#fff8fb 0,#ffe9f2 38%,#ffdce9 100%); }
@@ -83,17 +86,17 @@
       .section-title { font-size:30px; line-height:1.22; margin-bottom:9px; }
       .sub { max-width:310px; margin:0 auto 22px; font-size:14px; line-height:1.6; }
       .menu { grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
-      .card { border-radius:21px; box-shadow:0 12px 32px #b848751c; }
+      .card { border-radius:21px; box-shadow:0 10px 25px #b8487518; background:#fff9fccc; backdrop-filter:none; }
       .menu .card { min-height:132px; padding:15px 10px 13px; text-align:center; align-items:center; justify-content:space-between; }
       .menu .card p { display:none; }
       .menu .icon { font-size:31px; }
       .menu .card h3 { font-size:14px; line-height:1.3; margin:9px 0 5px; }
       .menu .arrow { font-size:12px; white-space:nowrap; }
-      .gallery { display:flex; gap:14px; margin:0 -16px; padding:8px 18px 25px; overflow-x:auto; scroll-snap-type:x mandatory; scroll-padding:18px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      .gallery { display:flex; gap:13px; margin:0 -16px; padding:8px 28px 23px; overflow-x:auto; scroll-snap-type:x proximity; scroll-padding:28px; -webkit-overflow-scrolling:touch; scrollbar-width:none; touch-action:pan-x; overscroll-behavior-x:contain; }
       .gallery::-webkit-scrollbar { display:none; }
-      .photo,.photo:nth-child(n) { flex:0 0 82vw; max-width:340px; height:min(106vw,440px); aspect-ratio:auto; padding:10px; border-radius:23px; transform:none; scroll-snap-align:center; box-shadow:0 14px 32px #953a5d26; }
-      .photo-art { height:84%; border-radius:16px; padding:0; }
-      .photo p { margin-top:12px; font-size:16px; }
+      .photo,.photo:nth-child(n) { flex:0 0 72vw; max-width:292px; height:min(92vw,370px); aspect-ratio:auto; padding:9px; border-radius:21px; transform:none; scroll-snap-align:center; box-shadow:0 11px 26px #953a5d20; }
+      .photo-art { height:83%; border-radius:15px; padding:0; }
+      .photo p { margin-top:10px; font-size:15px; }
       .video-memory { margin-top:24px; padding:9px; border-radius:23px; box-shadow:0 15px 38px #953a5d25; }
       .video-stage { border-radius:16px; aspect-ratio:16/9; }
       .video-stage video { object-fit:cover; }
@@ -113,11 +116,15 @@
       .modal { padding:34px 22px 27px; }
       .modal h2 { font-size:25px; }
       .modal p { line-height:1.7; }
+      .music-toggle { right:13px; width:44px; height:44px; font-size:19px; }
+      .card:hover,.photo:hover,.cta:hover { transform:none; }
     }
+    @media(prefers-reduced-motion:reduce){ html{scroll-behavior:auto}.blob,.down,.music-toggle.playing{animation:none}.card,.photo,.cta{transition:none} }
   </style>
 </head>
 <body>
   <div class="blob b1"></div><div class="blob b2"></div><div id="confetti"></div>
+  <button id="musicToggle" class="music-toggle" type="button" aria-label="播放背景音乐" onclick="toggleMusic()">♫</button>
   <header>
     <div class="hero">
       <span class="tag">💌 一封只属于你的生日邀请</span>
@@ -190,10 +197,35 @@
     function ensureVideoPlaying(){ memoryVideo.play().catch(()=>{}); }
     window.addEventListener('load', ensureVideoPlaying);
     document.addEventListener('WeixinJSBridgeReady', ensureVideoPlaying);
-    function startJourney(){ burst(); document.getElementById('memory').scrollIntoView({behavior:'smooth'}); }
+    let audioContext, masterGain, musicTimer, musicStarted = false, musicOn = false;
+    const melody = [261.63,329.63,392,523.25,392,329.63,293.66,349.23,440,523.25,440,349.23];
+    function scheduleMelody(){
+      if(!audioContext || !musicOn) return;
+      const start = audioContext.currentTime + .05;
+      melody.forEach((frequency,index)=>{
+        const osc=audioContext.createOscillator(), gain=audioContext.createGain();
+        osc.type=index%3===0?'triangle':'sine'; osc.frequency.value=frequency;
+        gain.gain.setValueAtTime(0,start+index*.52);
+        gain.gain.linearRampToValueAtTime(.16,start+index*.52+.06);
+        gain.gain.exponentialRampToValueAtTime(.001,start+index*.52+.46);
+        osc.connect(gain).connect(masterGain); osc.start(start+index*.52); osc.stop(start+index*.52+.5);
+      });
+    }
+    function startMusic(){
+      if(!audioContext){ audioContext=new (window.AudioContext||window.webkitAudioContext)(); masterGain=audioContext.createGain(); masterGain.gain.value=.1; masterGain.connect(audioContext.destination); }
+      audioContext.resume(); musicOn=true; musicStarted=true; masterGain.gain.setTargetAtTime(.1,audioContext.currentTime,.08);
+      clearInterval(musicTimer); scheduleMelody(); musicTimer=setInterval(scheduleMelody,melody.length*.52*1000);
+      const button=document.getElementById('musicToggle'); button.textContent='♪'; button.classList.add('playing'); button.setAttribute('aria-label','暂停背景音乐');
+    }
+    function toggleMusic(){
+      if(!musicStarted || !musicOn){ startMusic(); return; }
+      musicOn=false; clearInterval(musicTimer); masterGain.gain.setTargetAtTime(.0001,audioContext.currentTime,.08);
+      const button=document.getElementById('musicToggle'); button.textContent='♫'; button.classList.remove('playing'); button.setAttribute('aria-label','播放背景音乐');
+    }
+    function startJourney(){ if(!musicStarted) startMusic(); burst(); document.getElementById('memory').scrollIntoView({behavior:'smooth'}); }
     function goTo(id){ document.getElementById(id).scrollIntoView({behavior:'smooth'}); }
     function openModal(id){ document.getElementById(id).showModal(); }
-    function burst(){ const colors=['#ff2f7d','#ffd54f','#ff8fbd','#8de5df','#fff']; for(let i=0;i<80;i++){const c=document.createElement('i');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background=colors[i%colors.length];c.style.animationDelay=Math.random()*.8+'s';c.style.borderRadius=Math.random()>.5?'50%':'2px';document.getElementById('confetti').appendChild(c);setTimeout(()=>c.remove(),4500);} }
+    function burst(){ const colors=['#ff2f7d','#ffd54f','#ff8fbd','#8de5df','#fff'], total=matchMedia('(max-width:760px)').matches?36:70; for(let i=0;i<total;i++){const c=document.createElement('i');c.className='confetti';c.style.left=Math.random()*100+'vw';c.style.background=colors[i%colors.length];c.style.animationDelay=Math.random()*.8+'s';c.style.borderRadius=Math.random()>.5?'50%':'2px';document.getElementById('confetti').appendChild(c);setTimeout(()=>c.remove(),4500);} }
     function bigSurprise(){ burst(); openModal('wishModal'); }
   </script>
 </body>
